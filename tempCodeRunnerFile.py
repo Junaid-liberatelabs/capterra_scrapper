@@ -7,7 +7,7 @@ import asyncio
 from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
 from urllib.parse import urlparse, urljoin
-from concurrent.futures import ThreadPoolExecutor, as_completed # Ensure this is present
+from concurrent.futures import ThreadPoolExecutor
 import traceback
 import sys
 
@@ -75,7 +75,7 @@ from fastapi import FastAPI, HTTPException, Body
 app = FastAPI(
     title="Capterra Scraper API - Undetected Loader",
     description="Selenium loads all reviews, then BeautifulSoup parses. Focus on stealth.",
-    version="1.1.1" # Incremented
+    version="1.1.0" # Incremented
 )
 
 from bs4 import BeautifulSoup
@@ -90,6 +90,15 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+# --- Optional: selenium-stealth ---
+# try:
+#     from selenium_stealth import stealth
+#     SELENIUM_STEALTH_ENABLED = True
+#     print("INFO: selenium-stealth library found and will be used.")
+# except ImportError:
+#     SELENIUM_STEALTH_ENABLED = False
+#     print("INFO: selenium-stealth library not found. Running with standard Selenium.")
+
 try: from fake_useragent import UserAgent; ua = UserAgent()
 except ImportError: print("Warning: fake-useragent not installed."); ua = None
 
@@ -97,18 +106,21 @@ try: import lxml; DEFAULT_HTML_PARSER = "lxml"; print("INFO: Using lxml for HTML
 except ImportError: print("Warning: lxml not installed, using html.parser."); DEFAULT_HTML_PARSER = "html.parser"
 
 # --- Constants for Capterra ---
-SELENIUM_PAGE_TIMEOUT_S = 45
+SELENIUM_PAGE_TIMEOUT_S = 45 # Increased for potentially slower networks/heavier pages
 SELENIUM_ELEMENT_TIMEOUT_S = 25
 SELENIUM_INTERACTION_TIMEOUT_S = 15
-INITIAL_PAGE_LOAD_SLEEP_S = random.uniform(3.5, 5.5)
-AFTER_SHOW_MORE_CLICK_SLEEP_S = random.uniform(2.5, 4.0)
+INITIAL_PAGE_LOAD_SLEEP_S = random.uniform(3.5, 5.5) # Longer initial sleep
+AFTER_SHOW_MORE_CLICK_SLEEP_S = random.uniform(2.5, 4.0) # Longer and more varied sleep
 
+# Selectors for Capterra
 SHOW_MORE_REVIEWS_BUTTON_SELECTOR = 'button[data-testid="show-more-reviews"]'
 REVIEW_CARDS_CONTAINER_SELECTOR = 'div[data-test-id="review-cards-container"]'
-# MODIFIED SELECTOR HERE:
-INDIVIDUAL_REVIEW_CARD_SELECTOR = 'div.e1xzmg0z.c1ofrhif.typo-10' # Removed leading '>'
+INDIVIDUAL_REVIEW_CARD_SELECTOR = '> div.e1xzmg0z.c1ofrhif.typo-10'
 
-PRODUCT_NAME_SELECTOR_HEADER = 'span.e1xzmg0z.h11hhycw.font-semibold' # !!! VERIFY AND UPDATE IF NEEDED !!!
+PRODUCT_NAME_SELECTOR_HEADER = 'span.e1xzmg0z.h11hhycw.font-semibold' # !!! VERIFY THIS SELECTOR !!!
+# Fallback: For "Scholar LMS", the title is in <h1 data-testid="richcontent-title">Reviews of <!-- -->Scholar LMS</h1>
+# A more robust selector for the product name might be based on such a testid or structure if the above span fails.
+# For "Google One" it might be different. Let's assume for now the span is correct or will be updated.
 PRODUCT_LOGO_SELECTOR_HEADER = 'figure.e1xzmg0z.tf6i4tz img'
 PRODUCT_RATING_TEXT_SELECTOR_HEADER = 'div.flex.items-center.gap-1.hidden.lg\\:flex span.e1xzmg0z.sr2r3oj'
 PRODUCT_CATEGORY_BREADCRUMB_SELECTOR = 'nav[class*="be9etqu"] a[data-testid="categoryslug"]'
@@ -138,37 +150,45 @@ REVIEW_REASON_SELECTOR = 'p'
 
 POPUP_CLOSE_SELECTORS_CAPTERRA = [
     "#onetrust-accept-btn-handler",
-    "button[aria-label='Close' i]", 
+    "button[aria-label='Close' i]", # Generic close
     "button[class*='modal__close' i]", "button[class*='CloseButton']",
     "button[aria-label*='Dismiss' i]", "button[title*='Dismiss' i]",
     "div[role='dialog'] button[class*='close' i]",
-    "div[id^='ZN_'] button[aria-label='Close']", 
-    "button[id^='cookie-consent-accept']",
+    "div[id^='ZN_'] button[aria-label='Close']", # Qualtrics surveys
+    "button[id^='cookie-consent-accept']", # Another common pattern
 ]
 
 def setup_selenium_driver() -> webdriver.Chrome:
     options = webdriver.ChromeOptions()
-    # options.add_argument("--headless") 
+    # --- Options for reduced detection ---
+    # options.add_argument("--headless") # KEEP THIS COMMENTED OUT FOR INITIAL DEBUGGING
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # options.add_argument("--disable-gpu") 
+    options.add_argument("--disable-gpu") # Generally good for headless, less resource intensive
+    # options.add_argument("--blink-settings=imagesEnabled=false") # REMOVED - Likely cause of detection
 
-    # options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    # options.add_experimental_option('useAutomationExtension', False)
-    # options.add_argument("--disable-blink-features=AutomationControlled")
-    # options.add_argument("--window-size=1280,1024")
-    # user_agent_str = ua.random if ua else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-    # options.add_argument(f'user-agent={user_agent_str}')
-    # options.add_argument('--log-level=3')
-    # options.add_argument("--disable-infobars")
-    # options.add_argument("--disable-popup-blocking")
-    # options.add_argument("--start-maximized") 
-    # options.add_argument("--lang=en-US,en;q=0.9") 
-    # options.add_argument("--disable-features=UserAgentClientHint") 
+    # Standard anti-detection measures (less aggressive ones kept)
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    options.add_argument("--disable-blink-features=AutomationControlled")
+
+    options.add_argument("--window-size=1280,1024") # A common resolution
+    user_agent_str = ua.random if ua else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    options.add_argument(f'user-agent={user_agent_str}')
+    options.add_argument('--log-level=3') # Suppress non-critical logs
+
+    # More arguments to appear less like a bot
+    options.add_argument("--disable-infobars")
+    options.add_argument("--disable-popup-blocking")
+    options.add_argument("--start-maximized") # Could help appear more natural
+    options.add_argument("--lang=en-US,en;q=0.9") # Set language
+    options.add_argument("--disable-features=UserAgentClientHint") # Disable client hints which can reveal automation
 
     try:
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
+        
+        # Stealth modification for navigator.webdriver
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": """
                 Object.defineProperty(navigator, 'webdriver', {
@@ -176,6 +196,20 @@ def setup_selenium_driver() -> webdriver.Chrome:
                 });
             """
         })
+        
+        # --- If using selenium-stealth ---
+        # if SELENIUM_STEALTH_ENABLED:
+        #     stealth(driver,
+        #             languages=["en-US", "en"],
+        #             vendor="Google Inc.",
+        #             platform="Win32",
+        #             webgl_vendor="Intel Inc.",
+        #             renderer="Intel Iris OpenGL Engine",
+        #             fix_hairline=True,
+        #             run_on_insecure_origins=True,
+        #             )
+        #     print("  [Selenium Setup] selenium-stealth applied.")
+
         driver.set_page_load_timeout(SELENIUM_PAGE_TIMEOUT_S)
         return driver
     except Exception as e:
@@ -185,11 +219,16 @@ def setup_selenium_driver() -> webdriver.Chrome:
 
 def try_click(driver: webdriver.Chrome, element, timeout: int = SELENIUM_INTERACTION_TIMEOUT_S, thread_name: str = "DefaultThread"):
     try:
-        WebDriverWait(driver, timeout).until(EC.visibility_of(element))
+        WebDriverWait(driver, timeout).until(EC.visibility_of(element)) # Wait for visibility first
         WebDriverWait(driver, timeout).until(EC.element_to_be_clickable(element))
+        
+        # Scroll element into view using JavaScript more gently
         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});", element)
-        time.sleep(random.uniform(0.5, 1.2))
-        element.click()
+        time.sleep(random.uniform(0.5, 1.2)) # Slightly longer pause after scroll
+        
+        # Human-like click: move to element then click (less effective in headless)
+        # webdriver.ActionChains(driver).move_to_element(element).pause(random.uniform(0.1,0.3)).click().perform()
+        element.click() # Standard click
         return True
     except ElementClickInterceptedException:
         print(f"    [{thread_name}][try_click] Click intercepted. Trying JS click after short delay.")
@@ -216,35 +255,44 @@ def attempt_to_close_popups_capterra(driver: webdriver.Chrome, thread_name: str)
 
     for sel_idx, sel in enumerate(POPUP_CLOSE_SELECTORS_CAPTERRA):
         current_closed_this_selector = False
+        # Check in iframes first
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
         for iframe_idx, iframe in enumerate(iframes):
             try:
                 if not iframe.is_displayed(): continue
+                # print(f"        [{thread_name}] Switching to iframe ({iframe_idx}) for selector {sel[:30]}...")
                 driver.switch_to.frame(iframe)
                 popups_in_iframe = driver.find_elements(By.CSS_SELECTOR, sel)
                 for popup_btn_iframe in popups_in_iframe:
                     if popup_btn_iframe.is_displayed() and popup_btn_iframe.is_enabled():
+                        print(f"          [{thread_name}] Found popup in iframe with selector: {sel[:50]}")
                         if try_click(driver, popup_btn_iframe, SELENIUM_INTERACTION_TIMEOUT_S / 2, thread_name):
+                            print(f"          [{thread_name}] Clicked popup in iframe.")
                             closed_any = True; current_closed_this_selector = True; time.sleep(0.7)
                             break 
                 driver.switch_to.default_content()
                 if current_closed_this_selector: break 
-            except Exception: driver.switch_to.default_content()
+            except Exception:
+                driver.switch_to.default_content()
             if current_closed_this_selector: break
         if current_closed_this_selector: continue
 
+        # Check in main content
         try:
             popups = driver.find_elements(By.CSS_SELECTOR, sel)
             if not popups: continue
             for popup_btn in popups:
                 if popup_btn.is_displayed() and popup_btn.is_enabled():
+                    print(f"      [{thread_name}] Attempting main content popup close ({sel_idx+1}/{len(POPUP_CLOSE_SELECTORS_CAPTERRA)}) with: {sel[:50]}...")
                     if try_click(driver, popup_btn, SELENIUM_INTERACTION_TIMEOUT_S / 2, thread_name):
                         closed_any = True; current_closed_this_selector = True; time.sleep(0.7)
                         break
-            if current_closed_this_selector and (not popups or not popups[0].is_displayed()): break
-        except Exception: pass
+            if current_closed_this_selector and (not popups or not popups[0].is_displayed()):
+                 break
+        except Exception:
+            pass
     
-    final_handles = set(driver.window_handles)
+    final_handles = set(driver.window_handles) # Handle new windows
     if len(final_handles) > len(initial_handles):
         new_handles = final_handles - initial_handles
         for handle in new_handles:
@@ -255,13 +303,14 @@ def attempt_to_close_popups_capterra(driver: webdriver.Chrome, thread_name: str)
 
     if closed_any: print(f"      [{thread_name}] Popup handling finished. Pausing briefly."); time.sleep(random.uniform(0.8, 1.2))
 
+
 def parse_date_capterra(date_str: str) -> Optional[datetime]:
     if not date_str: return None
     formats_to_try = ["%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y"]
     for fmt in formats_to_try:
         try: return datetime.strptime(date_str.strip(), fmt)
         except ValueError: continue
-    # print(f"      [Date Parse] Warning: Could not parse date: {date_str}") # Reduce noise
+    print(f"      [Date Parse] Warning: Could not parse date: {date_str}")
     return None
 
 def _parse_individual_review_card(review_card_soup: BeautifulSoup, base_url: str, thread_name: str) -> Optional[CapterraReview]:
@@ -273,8 +322,11 @@ def _parse_individual_review_card(review_card_soup: BeautifulSoup, base_url: str
         job_title, industry, company_size_text, time_used = None, None, None, None
         if reviewer_details_block:
             details_texts = [s.strip() for s in reviewer_details_block.stripped_strings]
-            current_details = list(details_texts) 
-            if current_details and reviewer_name and current_details[0] == reviewer_name: current_details.pop(0)
+            current_details = list(details_texts) # Create a mutable copy
+
+            if current_details and reviewer_name and current_details[0] == reviewer_name:
+                current_details.pop(0)
+            
             if current_details: job_title = current_details.pop(0)
             
             industry_parts = []
@@ -310,10 +362,10 @@ def _parse_individual_review_card(review_card_soup: BeautifulSoup, base_url: str
         
         date_el = None
         possible_date_els = review_card_soup.select(REVIEW_DATE_SELECTOR)
-        for p_date_el in possible_date_els: 
-            if title_el and p_date_el in title_el.parent.find_all(recursive=False, limit=5):
+        for p_date_el in possible_date_els: # Find date near title
+            if title_el and p_date_el in title_el.parent.find_all(recursive=False, limit=5): # Check siblings or near children
                 date_el = p_date_el; break
-        if not date_el and possible_date_els: date_el = possible_date_els[0] 
+        if not date_el and possible_date_els: date_el = possible_date_els[0] # Fallback
 
         date_published_str = date_el.get_text(strip=True) if date_el else "Unknown Date"
         date_published_dt = parse_date_capterra(date_published_str)
@@ -327,21 +379,28 @@ def _parse_individual_review_card(review_card_soup: BeautifulSoup, base_url: str
             rating_items = ratings_dropdown_container.select(REVIEW_RATING_CATEGORY_ITEM_SELECTOR)
             for item in rating_items:
                 cat_name_el = item.select_one(REVIEW_RATING_CATEGORY_NAME_SELECTOR)
-                val_el_text_content = item.get_text()
+                val_el_text_content = item.get_text() # Get all text from the item
+
                 if cat_name_el and val_el_text_content:
                     cat_name = cat_name_el.get_text(strip=True)
-                    max_r, parsed_val = 5, None
+                    
+                    max_r = 5
+                    parsed_val = None
+                    
                     if "Likelihood to Recommend" in cat_name:
                         max_r = 10
                         match_recommend = re.search(r"(\d+)\s*/\s*10", val_el_text_content)
                         if match_recommend: parsed_val = float(match_recommend.group(1))
-                    else: 
+                    else: # Star rating
                         star_val_el = item.select_one(REVIEW_RATING_CATEGORY_VALUE_SELECTOR)
                         if star_val_el:
                             try: parsed_val = float(star_val_el.get_text(strip=True).split()[0])
                             except: pass
-                    if parsed_val is not None: rating_details_list.append(RatingDetail(category=cat_name, rating=parsed_val, max_rating=max_r))
-                    # else: print(f"      [{thread_name}] Warning: Could not parse rating value for '{cat_name}' from: '{val_el_text_content}'")
+                    
+                    if parsed_val is not None:
+                        rating_details_list.append(RatingDetail(category=cat_name, rating=parsed_val, max_rating=max_r))
+                    else:
+                        print(f"      [{thread_name}] Warning: Could not parse rating value for category '{cat_name}' from text: '{val_el_text_content}'")
         
         pros_el = review_card_soup.select_one(REVIEW_PROS_TEXT_SELECTOR)
         pros_text = pros_el.get_text(strip=True) if pros_el else None
@@ -349,7 +408,7 @@ def _parse_individual_review_card(review_card_soup: BeautifulSoup, base_url: str
         cons_text = cons_el.get_text(strip=True) if cons_el else None
         
         overall_comment_text = None
-        overall_comment_candidates = review_card_soup.select('div[class*="!mt-4 space-y-6"] > p')
+        overall_comment_candidates = review_card_soup.select('div[class*="!mt-4 space-y-6"] > p') # More specific
         if overall_comment_candidates:
             temp_overall_text = overall_comment_candidates[0].get_text(strip=True)
             is_pros_or_cons = (temp_overall_text == pros_text) or (temp_overall_text == cons_text)
@@ -362,7 +421,7 @@ def _parse_individual_review_card(review_card_soup: BeautifulSoup, base_url: str
             if source_text_el: source_type = source_text_el.get_text(strip=True)
             
             tooltip_el = review_card_soup.select_one(f'div[role="dialog"][class*="l1ix9ysh"]')
-            if tooltip_el and source_group.find_next_sibling('div', role='dialog') == tooltip_el :
+            if tooltip_el and source_group.find_next_sibling('div', role='dialog') == tooltip_el : # Check if it's the right tooltip
                 source_tooltip = tooltip_el.get_text(strip=True)
 
         alternatives_considered, reason_for_choosing = [], None
@@ -382,10 +441,11 @@ def _parse_individual_review_card(review_card_soup: BeautifulSoup, base_url: str
                     url = urljoin(base_url, link_el['href']) if link_el.has_attr('href') else None
                     target_list.append(ProductLink(name=name, logo_url=logo_url, url=url))
                 
-                reason_p_el = section_el.find('p', recursive=False) 
-                if not reason_p_el: 
+                reason_p_el = section_el.find('p', recursive=False) # Direct child <p> for reason
+                if not reason_p_el: # Or a <p> within a direct child div
                     div_child = section_el.find('div', recursive=False)
                     if div_child: reason_p_el = div_child.find('p',recursive=False)
+                
                 if reason_p_el:
                     reason_text = reason_p_el.get_text(strip=True)
                     if reason_var_name_str == "reason_for_switching": reason_for_switching = reason_text
@@ -401,7 +461,7 @@ def _parse_individual_review_card(review_card_soup: BeautifulSoup, base_url: str
         )
     except Exception as e:
         print(f"      [{thread_name}] Error parsing individual review card: {type(e).__name__} - {e}")
-        # traceback.print_exc(file=sys.stdout)
+        traceback.print_exc(file=sys.stdout) # DEBUG
         return None
 
 def _scrape_capterra_page_for_reviews(
@@ -426,32 +486,30 @@ def _scrape_capterra_page_for_reviews(
         overall_rating_val, total_reviews_count_hdr = None, None
 
         try:
+            # Wait for a key element in the header to ensure the page is somewhat loaded
             WebDriverWait(driver, SELENIUM_ELEMENT_TIMEOUT_S).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, 'div[class*="sticky top-0"]'))
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'div[class*="sticky top-0"]')) # A general container for header info
             )
             print(f"    [{thread_name}] Main header container found. Proceeding to extract product details.")
+
+            # Try to get product name
             try:
                 product_name_el = WebDriverWait(driver, SELENIUM_ELEMENT_TIMEOUT_S / 2).until(
                     EC.visibility_of_element_located((By.CSS_SELECTOR, PRODUCT_NAME_SELECTOR_HEADER))
                 )
                 product_name = product_name_el.text.strip()
-                print(f"    [{thread_name}] Product Name from specific selector: {product_name}")
+                print(f"    [{thread_name}] Product Name: {product_name}")
             except TimeoutException:
                 print(f"    [{thread_name}] Specific product name selector ('{PRODUCT_NAME_SELECTOR_HEADER}') timed out.")
-                try: 
-                    h1_elements = driver.find_elements(By.TAG_NAME, "h1")
-                    for h1_el in h1_elements:
-                        if "reviews of" in h1_el.text.lower():
-                            product_name_candidate = h1_el.text.lower().replace("reviews of", "").strip().title()
-                            # Further check if this is likely the main product name
-                            if company_slug.lower().replace("-"," ") in product_name_candidate.lower():
-                                product_name = product_name_candidate
-                                print(f"    [{thread_name}] Fallback product name from H1: {product_name}")
-                                break
-                    if product_name == "Unknown Product": # If still not found
-                         print(f"    [{thread_name}] Could not determine product name from H1 tags either.")
-                except Exception as e_h1_fallback:
-                     print(f"    [{thread_name}] Error in H1 fallback for product name: {e_h1_fallback}")
+                try: # Fallback for product name from H1 (e.g. "Reviews of Product Name")
+                    h1_review_title = WebDriverWait(driver, 5).until(
+                        EC.visibility_of_element_located((By.CSS_SELECTOR, 'h1[data-testid="richcontent-title"]'))
+                    )
+                    if h1_review_title and "reviews of" in h1_review_title.text.lower():
+                        product_name = h1_review_title.text.lower().replace("reviews of", "").strip().title()
+                        print(f"    [{thread_name}] Fallback product name from H1: {product_name}")
+                except: print(f"    [{thread_name}] Fallback H1 for product name also not found.")
+
 
             try: product_logo_url = driver.find_element(By.CSS_SELECTOR, PRODUCT_LOGO_SELECTOR_HEADER).get_attribute('src')
             except NoSuchElementException: print(f"    [{thread_name}] Product logo not found with selector: {PRODUCT_LOGO_SELECTOR_HEADER}")
@@ -466,14 +524,20 @@ def _scrape_capterra_page_for_reviews(
 
             try: category_name = driver.find_element(By.CSS_SELECTOR, PRODUCT_CATEGORY_BREADCRUMB_SELECTOR).text.strip()
             except NoSuchElementException: print(f"    [{thread_name}] Product category breadcrumb not found: {PRODUCT_CATEGORY_BREADCRUMB_SELECTOR}")
+
         except TimeoutException:
-            print(f"  [{thread_name}] WARNING: Header section did not load key elements within timeout. Product info might be incomplete.")
+            print(f"  [{thread_name}] CRITICAL: Header section did not load within timeout. Cannot extract product info.")
+            # driver.save_screenshot(f"{thread_name}_header_load_fail.png") # DEBUG
+            # with open(f"{thread_name}_header_load_fail.html", "w", encoding="utf-8") as f: f.write(driver.page_source) # DEBUG
+            # return None # Or raise error
+            # For now, let's allow it to proceed to see if reviews can still be gathered.
         except Exception as e_prod_info:
             print(f"  [{thread_name}] Error during product info extraction: {e_prod_info}")
+            # traceback.print_exc() # DEBUG
+
 
         product_info = ProductInfo(
-            name=product_name if product_name != "Unknown Product" else company_slug.replace("-"," ").title(), # Better default
-            capterra_url=HttpUrl(product_url_str), logo_url=product_logo_url,
+            name=product_name, capterra_url=HttpUrl(product_url_str), logo_url=product_logo_url,
             overall_product_rating=overall_rating_val, total_product_reviews_count_header=total_reviews_count_hdr,
             category=category_name
         )
@@ -481,8 +545,8 @@ def _scrape_capterra_page_for_reviews(
 
         show_more_clicks = 0
         max_show_more_clicks = 200 
-        if total_reviews_count_hdr and total_reviews_count_hdr > 20: # Slightly reduced base number of reviews per load
-            max_show_more_clicks = (total_reviews_count_hdr // 20) + 10 
+        if total_reviews_count_hdr and total_reviews_count_hdr > 25:
+            max_show_more_clicks = (total_reviews_count_hdr // 20) + 10 # Generous buffer
 
         print(f"  [{thread_name}] Starting 'Show more reviews' loop (max clicks: {max_show_more_clicks})...")
         consecutive_no_new_reviews = 0
@@ -492,65 +556,66 @@ def _scrape_capterra_page_for_reviews(
             num_reviews_before_click = len(reviews_elements_before_click)
             
             try:
-                WebDriverWait(driver, SELENIUM_ELEMENT_TIMEOUT_S / 2 ).until( # Wait for container before button
-                    EC.presence_of_element_located((By.CSS_SELECTOR, REVIEW_CARDS_CONTAINER_SELECTOR))
-                )
                 show_more_button = WebDriverWait(driver, SELENIUM_ELEMENT_TIMEOUT_S / 2.5 ).until(
                     EC.visibility_of_element_located((By.CSS_SELECTOR, SHOW_MORE_REVIEWS_BUTTON_SELECTOR))
-                ) 
+                ) # Wait for visibility
                 
                 if not show_more_button.is_enabled():
                     print(f"  [{thread_name}] 'Show more' button found but not enabled. Assuming end of reviews.")
                     break
                 
                 print(f"  [{thread_name}] Clicking 'Show more reviews' (Click #{show_more_clicks + 1}). DOM reviews: {num_reviews_before_click}")
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});", show_more_button)
-                time.sleep(random.uniform(0.4, 0.8)) 
-                WebDriverWait(driver, SELENIUM_INTERACTION_TIMEOUT_S).until(EC.element_to_be_clickable(show_more_button))
                 
-                # Try JS click first as it can be more robust with overlays
-                try:
-                    driver.execute_script("arguments[0].click();", show_more_button)
-                except Exception: # Fallback to Selenium click
-                    print(f"    [{thread_name}] JS click failed for 'Show More', trying Selenium click.")
-                    show_more_button.click()
+                # Scroll to button and click
+                driver.execute_script("arguments[0].scrollIntoView(true);", show_more_button)
+                time.sleep(random.uniform(0.3, 0.7)) # Small pause after scroll
+
+                # To make the click more reliable
+                WebDriverWait(driver, SELENIUM_INTERACTION_TIMEOUT_S).until(EC.element_to_be_clickable(show_more_button))
+                show_more_button.click()
                 
                 show_more_clicks += 1
                 print(f"    [{thread_name}] Clicked. Sleeping for {AFTER_SHOW_MORE_CLICK_SLEEP_S:.2f}s...")
                 time.sleep(AFTER_SHOW_MORE_CLICK_SLEEP_S)
                 
+                # Check if new reviews were loaded
                 reviews_elements_after_click = driver.find_elements(By.CSS_SELECTOR, f"{REVIEW_CARDS_CONTAINER_SELECTOR} {INDIVIDUAL_REVIEW_CARD_SELECTOR}")
                 num_reviews_after_click = len(reviews_elements_after_click)
 
                 if num_reviews_after_click == num_reviews_before_click:
                     consecutive_no_new_reviews += 1
                     print(f"    [{thread_name}] No new reviews loaded this click. Consecutive fails: {consecutive_no_new_reviews}")
-                    if consecutive_no_new_reviews >= 3: 
+                    if consecutive_no_new_reviews >= 3: # If 3 clicks in a row load nothing new
                         print(f"  [{thread_name}] No new reviews loaded for {consecutive_no_new_reviews} consecutive clicks. Assuming end.")
                         break
                 else:
-                    consecutive_no_new_reviews = 0 
+                    consecutive_no_new_reviews = 0 # Reset counter
 
                 if total_reviews_count_hdr and num_reviews_after_click >= total_reviews_count_hdr:
                     print(f"  [{thread_name}] DOM review count ({num_reviews_after_click}) reached/exceeded header count ({total_reviews_count_hdr}).")
                     break
 
             except TimeoutException:
-                print(f"  [{thread_name}] 'Show more reviews' button not found or not visible/clickable after waiting. Assuming all reviews are loaded.")
+                print(f"  [{thread_name}] 'Show more reviews' button not found or not visible/clickable. Assuming all reviews are loaded.")
                 break
             except Exception as e_sm:
                 print(f"  [{thread_name}] Error during 'Show more' click loop: {type(e_sm).__name__} - {e_sm}")
                 traceback.print_exc(file=sys.stdout)
+                # Consider if we should try closing popups again here
                 attempt_to_close_popups_capterra(driver, thread_name)
-                time.sleep(1) 
+                time.sleep(1) # Pause after error and popup attempt
+                # break # Option to break on any error in this loop
         
         print(f"  [{thread_name}] Finished 'Show more' loop. Total clicks: {show_more_clicks}.")
+        
         print(f"  [{thread_name}] Retrieving final page source for parsing...")
         page_source = driver.page_source
+        # driver.save_screenshot(f"{thread_name}_final_page_for_parsing.png") # DEBUG
+        # with open(f"{thread_name}_final_page_for_parsing.html", "w", encoding="utf-8") as f: f.write(page_source) # DEBUG
         
         print(f"  [{thread_name}] Quitting Selenium driver BEFORE parsing...")
         driver.quit()
-        driver = None 
+        driver = None # Ensure driver is None after quit
         print(f"  [{thread_name}] Selenium driver quit. Starting BeautifulSoup parsing...")
 
         soup = BeautifulSoup(page_source, DEFAULT_HTML_PARSER)
@@ -564,8 +629,10 @@ def _scrape_capterra_page_for_reviews(
             for idx, card_soup in enumerate(review_card_soups):
                 review = _parse_individual_review_card(card_soup, product_url_str, thread_name)
                 if review:
-                    if start_date_filter and review.date_published and review.date_published < start_date_filter: continue
-                    if end_date_filter and review.date_published and review.date_published > end_date_filter: continue
+                    if start_date_filter and review.date_published and review.date_published < start_date_filter:
+                        continue
+                    if end_date_filter and review.date_published and review.date_published > end_date_filter:
+                        continue
                     all_reviews_on_page.append(review)
         else:
             print(f"  [{thread_name}] CRITICAL: Review cards container ('{REVIEW_CARDS_CONTAINER_SELECTOR}') not found in final page source.")
@@ -583,18 +650,18 @@ def _scrape_capterra_page_for_reviews(
     except Exception as e_main_scrape:
         print(f"  [{thread_name}] MAJOR ERROR during Capterra scrape for {product_url_str}: {type(e_main_scrape).__name__} - {e_main_scrape}")
         traceback.print_exc()
-        if driver: 
+        if driver: # If error happened before driver quit
             try:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                # driver.save_screenshot(f"ERROR_{thread_name}_{timestamp}.png") # Uncomment for debugging
-                # with open(f"ERROR_{thread_name}_{timestamp}.html", "w", encoding="utf-8") as f: # Uncomment for debugging
+                # driver.save_screenshot(f"ERROR_{thread_name}_{timestamp}.png")
+                # with open(f"ERROR_{thread_name}_{timestamp}.html", "w", encoding="utf-8") as f:
                 #     f.write(driver.page_source)
-                # print(f"    [{thread_name}] Saved error screenshot and page source (if enabled).")
+                print(f"    [{thread_name}] Saved error screenshot and page source (if enabled).")
             except Exception as e_save:
                 print(f"    [{thread_name}] Could not save error screenshot/source: {e_save}")
         return None
     finally:
-        if driver: 
+        if driver: # Ensure driver is always quit if initialized
             driver.quit()
             print(f"  [{thread_name}] WebDriver quit in finally block.")
 
@@ -646,6 +713,8 @@ async def scrape_capterra_endpoint(request: ScrapeRequest = Body(...)) -> Dict[s
     print(f"API request for Capterra: {len(request.urls)} URLs (v{app.version}).")
     results: Dict[str, Dict[str, Any]] = {}
     
+    # Using ThreadPoolExecutor for true parallelism with sync functions
+    # max_workers can be adjusted based on your system's capability
     with ThreadPoolExecutor(max_workers=min(len(request.urls), 4)) as executor:
         future_to_url = {}
         for url_obj in request.urls:
@@ -656,7 +725,7 @@ async def scrape_capterra_endpoint(request: ScrapeRequest = Body(...)) -> Dict[s
             future = executor.submit(scrape_capterra_sync, url_str, start_date_filter, end_date_filter)
             future_to_url[future] = url_str
 
-        for future in as_completed(future_to_url): # as_completed is correctly imported and used
+        for future in as_completed(future_to_url):
             original_url_str = future_to_url[future]
             try:
                 scrape_result = future.result()
@@ -669,18 +738,11 @@ async def scrape_capterra_endpoint(request: ScrapeRequest = Body(...)) -> Dict[s
     print(f"Finished Capterra API request processing (v{app.version}).")
     return results
 
-# For local testing
 # if __name__ == "__main__":
 #     async def main_test_capterra():
-#         # Test with a URL that previously caused issues to ensure fixes work
-#         test_url_scholar = "https://www.capterra.com/p/135005/Scholar-LMS/reviews/"
-#         test_url_google = "https://www.capterra.com/p/253176/Google-One/reviews/"
-        
-#         # Test one URL at a time first for easier debugging
-#         test_request = ScrapeRequest(urls=[HttpUrl(test_url_scholar)])
-#         # test_request = ScrapeRequest(urls=[HttpUrl(test_url_google)])
-#         # test_request = ScrapeRequest(urls=[HttpUrl(test_url_scholar), HttpUrl(test_url_google)]) # Test multiple
-        
+#         test_url = "https://www.capterra.com/p/135005/Scholar-LMS/reviews/"
+#         # test_url = "https://www.capterra.com/p/253176/Google-One/reviews/"
+#         test_request = ScrapeRequest(urls=[HttpUrl(test_url)])
 #         results = await scrape_capterra_endpoint(test_request)
 #         print(json.dumps(results, indent=2, default=str))
 #     asyncio.run(main_test_capterra())

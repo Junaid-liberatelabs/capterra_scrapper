@@ -1,0 +1,9 @@
+v1 -> Avoids being detected
+
+v2 - structured formatted reviews but pop closer funtion isn't added
+
+v3 - structured with pop up closer
+
+v4 - resolving bugs of v3 but still have show more button logical issue
+
+v5- logic for laoding spinner but the loading never ends
