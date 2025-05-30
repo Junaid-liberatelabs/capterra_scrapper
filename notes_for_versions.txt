@@ -10,6 +10,10 @@ v5- logic for laoding spinner but the loading never ends
 
 v6 - no driver
 
-v7 - selenium driverless
+v7 - selenium driverless successfully undetected
+
+v8 - can scroll seaminglessly
+
+v9 - successfully laoding all reviews and parsing (Best version)
 
 playwright_version - same but with playwright
