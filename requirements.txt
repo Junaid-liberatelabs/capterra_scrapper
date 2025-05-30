@@ -4,7 +4,7 @@ webdriver-manager
 beautifulsoup4
 lxml # Preferred HTML parser for BeautifulSoup
 # curl-cffi # Was in v15.py, not strictly needed for Capterra's "Show More" but kept for v15.py compatibility
-fake-useragent # Optional: For generating realistic user agents
+# fake-useragent 
 
 # API Framework
 fastapi
@@ -12,6 +12,10 @@ uvicorn[standard] # For running the FastAPI app
 
 # Data Validation
 pydantic
+
+nodriver
+
+# playwright
 
 # Standard Library (implicitly used, no need to list but good to be aware of)
 # asyncio

@@ -77,8 +77,8 @@ SELENIUM_PAGE_TIMEOUT_S = 40
 SELENIUM_ELEMENT_TIMEOUT_S = 15 
 SELENIUM_INTERACTION_TIMEOUT_S = 10
 INITIAL_PAGE_LOAD_SLEEP_S = random.uniform(3.0, 4.5)
-# LOADING_SPINNER_SELECTOR = 'svg[class*="s1xr3lbz"]' # Kept for reference, but not primary wait
-AFTER_SHOW_MORE_CLICK_LOADING_TIMEOUT_S = 20 # Timeout for waiting for new reviews after click
+LOADING_SPINNER_SELECTOR = 'svg[class*="s1xr3lbz"]' # Selector for loading spinner
+AFTER_SHOW_MORE_CLICK_LOADING_TIMEOUT_S = 400 # Timeout for waiting for new reviews after click
 
 SHOW_MORE_REVIEWS_BUTTON_SELECTOR = 'button[data-testid="show-more-reviews"]'
 REVIEW_CARDS_CONTAINER_SELECTOR = 'div[data-test-id="review-cards-container"]'
