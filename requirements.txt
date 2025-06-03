@@ -1,32 +1,7 @@
-# Core Web Scraping & Automation
-selenium
-webdriver-manager
-beautifulsoup4
-lxml # Preferred HTML parser for BeautifulSoup
-# curl-cffi # Was in v15.py, not strictly needed for Capterra's "Show More" but kept for v15.py compatibility
-# fake-useragent 
-
-# API Framework
 fastapi
-uvicorn[standard] # For running the FastAPI app
-
-# Data Validation
+uvicorn[standard]
 pydantic
-
-nodriver
-
-# playwright
-
-# Standard Library (implicitly used, no need to list but good to be aware of)
-# asyncio
-# concurrent.futures
-# datetime
-# json
-# os
-# random
-# re
-# sys
-# time
-# traceback
-# typing
-# urllib
+selenium-driverless
+beautifulsoup4
+lxml
+python-dotenv
